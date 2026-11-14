@@ -17,6 +17,35 @@ fn env(wire: Option<Supply>, third_rail: Option<Supply>) -> RailEnv {
 const LIVE: Supply = Supply { volts: 600.0, nominal: 600.0 };
 const DEAD: Supply = Supply { volts: 0.0, nominal: 600.0 };
 
+/// Scenery beside the track does not stop a rail vehicle, whose box only guesses at the body
+/// in a bend; another vehicle does, and scenery still stops a bus.
+#[test]
+fn on_the_rails_only_vehicles_are_in_the_way() {
+    let crashes = |on_rails: bool, vehicle_ahead: bool| {
+        let mut v = vehicle(|d| {
+            d.bounding_box = Some([2.0, 2.0, 2.0, 0.0, 3.0, 1.0]);
+            d.rolling_resistance = 0.0;
+        });
+        let ahead = crate::collision::Obb::point(DVec3::new(0.0, 4.15, 1.0), 0.025);
+        let mut world = crate::collision::CollisionWorld::default();
+        if vehicle_ahead {
+            v.dynamic_boxes.push(ahead);
+        } else {
+            world.add(ahead);
+        }
+        v.collision = Some(Arc::new(world));
+        if on_rails {
+            v.set_rail_env(Some(env(None, None)));
+        }
+        v.set_speed(2.0);
+        v.step_physics(0.1);
+        v.crashes
+    };
+    assert_eq!(crashes(true, false), 0, "a wall beside the track");
+    assert_eq!(crashes(false, false), 1, "the same wall and a bus");
+    assert_eq!(crashes(true, true), 1, "another vehicle on the track");
+}
+
 #[test]
 fn a_map_without_a_line_takes_the_current_for_granted() {
     let mut v = vehicle(|d| d.rail_power = PowerKind::Catenary);

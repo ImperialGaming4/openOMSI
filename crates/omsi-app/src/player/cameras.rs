@@ -34,22 +34,36 @@ impl Player {
     /// `like_omsi` sits him as OMSI 2 does, back on the seat with his hands off the wheel (Settings →
     /// "Driver sits as in OMSI 2").
     pub(crate) fn sync_driver_hands(&mut self, renderer: &Renderer, scene: &mut Scene, dt: f32, show: bool, mirror_only: bool, hands: bool, like_omsi: bool) {
-        if let Some(d) = self.driver.as_mut() {
-            d.show_hands_in_cab = hands;
-            d.set_original_pose(like_omsi);
-            d.update(renderer, scene, &self.vehicle, &self.render, dt, show, mirror_only);
+        let Some(d) = self.driver.as_mut() else { return };
+        d.show_hands_in_cab = hands;
+        d.set_original_pose(like_omsi);
+        // (in a coupled part's cab - the NF6D's rear one - the figure sits at that cab's
+        // wheel, moved over when the driver changes ends)
+        let cab = self.vehicle.driving_cab();
+        if cab != d.cab {
+            let seated = match cab {
+                Some(k) => d.attach(&crate::driver::PartCar { part: &self.vehicle.trailers[k], main: &self.vehicle }),
+                None => d.attach(&self.vehicle),
+            };
+            if seated {
+                d.cab = cab;
+            }
+        }
+        match (d.cab, d.cab.and_then(|k| self.trailer_renders.get(k))) {
+            (Some(k), Some(r)) => d.update(renderer, scene, &crate::driver::PartCar { part: &self.vehicle.trailers[k], main: &self.vehicle }, r, dt, show, mirror_only),
+            _ => d.update(renderer, scene, &self.vehicle, &self.render, dt, show, mirror_only),
         }
     }
 
     /// The driver's chosen camera as it is fixed in the bus (before the bus's own motion), turned
     /// by the look and the steering: what a glide between two cameras mixes.
     pub(crate) fn driver_local(&self, look: (f32, f32)) -> Option<omsi_vehicle::Camera> {
-        // (no glide onto a coupled part's camera: it is not in the front's frame)
-        if self.trailer_driver_camera().is_some() {
-            return None;
-        }
+        // (a coupled part's camera is fixed in that part: `driver_world` puts it there)
         let def = &self.vehicle.ty.def;
-        let c = def.cameras_driver.get(self.driver_camera_slot()).or(def.cameras_driver.first())?;
+        let c = match self.trailer_driver_camera() {
+            Some((_, c)) => c,
+            None => def.cameras_driver.get(self.driver_camera_slot()).or(def.cameras_driver.first())?,
+        };
         Some(omsi_vehicle::Camera {
             yaw: c.yaw + look.0 + self.steer_look,
             pitch: (c.pitch + look.1).clamp(-89.0, 89.0),
@@ -60,6 +74,11 @@ impl Player {
     /// `driver_local`'s camera in the world, with the bus's pitch and bank and the head on it
     /// (the same as `camera_look` makes of the driver's camera).
     pub(crate) fn driver_world(&self, turned: &omsi_vehicle::Camera) -> Camera {
+        // (on a coupled part's body, as `camera_look` hangs it)
+        if let Some((t, _)) = self.trailer_driver_camera() {
+            let (eye, yaw, pitch, roll) = t.camera_world_full(turned);
+            return Camera { position: eye, yaw, pitch: pitch.clamp(-89.0, 89.0), roll, fov_deg: turned.fov, near: 0.1, far: 6000.0 };
+        }
         let (eye, yaw, pitch, roll) = self.vehicle.camera_world_full(turned);
         // the driver's eye sits a touch forward of the authored seat point.
         let eye = eye + self.vehicle.body_rotation().transform_vector3(self.head_offset() + self.seat + EYE_NUDGE).as_dvec3();
@@ -95,9 +114,8 @@ impl Player {
         dist: f32,
         dt: f32,
     ) -> Camera {
-        let def = &self.vehicle.ty.def;
-        let c = def.camera_outside_center;
-        let centre = camera_arm::lift_pivot(world, orbit_pivot(self.vehicle.position, self.vehicle.heading, c));
+        let (at, heading, c) = self.vehicle.orbit_target();
+        let centre = camera_arm::lift_pivot(world, orbit_pivot(at, heading, c));
         let want = dist.clamp(ORBIT_MIN, ORBIT_MAX);
         let back = -cam.forward().as_dvec3().normalize_or_zero();
         if back.length_squared() < 0.5 {
@@ -150,19 +168,15 @@ impl Player {
     /// The driver camera chosen past the front's own: the coupled part it is on and the
     /// camera (None while one of the front's is chosen).
     pub(crate) fn trailer_driver_camera(&self) -> Option<(&omsi_sim::vehicle::TrailerPart, &omsi_vehicle::Camera)> {
-        let front = self.vehicle.ty.def.cameras_driver.len();
-        let mut k = self.driver_camera_slot();
-        if k < front {
-            return None;
-        }
-        k -= front;
-        for t in &self.vehicle.trailers {
-            if let Some(c) = t.ty.def.cameras_driver.get(k) {
-                return Some((t, c));
-            }
-            k -= t.ty.def.cameras_driver.len();
-        }
-        None
+        let (part, k) = self.trailer_driver_seat()?;
+        let t = &self.vehicle.trailers[part];
+        Some((t, &t.ty.def.cameras_driver[k]))
+    }
+
+    /// The coupled part (its index) whose driver camera is chosen, and the camera's index
+    /// among that part's (None while one of the front's is chosen).
+    pub(crate) fn trailer_driver_seat(&self) -> Option<(usize, usize)> {
+        self.vehicle.driver_camera_part(self.driver_camera_slot())
     }
 
     /// `look`: yaw/pitch the player has turned the head (or the orbit) by; `dist`: how far
@@ -240,12 +254,12 @@ impl Player {
                 }
             }
             None => {
-                // outside view: an orbit around the vehicle
-                let c = def.camera_outside_center;
-                let center = orbit_pivot(self.vehicle.position, self.vehicle.heading, c);
+                // outside view: an orbit around the vehicle (round the cab driven from)
+                let (at, heading, c) = self.vehicle.orbit_target();
+                let center = orbit_pivot(at, heading, c);
                 let mut cam = Camera {
                     position: center,
-                    yaw: self.vehicle.heading as f32 + look.0,
+                    yaw: heading as f32 + look.0,
                     pitch: (-15.0 + look.1).clamp(-85.0, 85.0),
                     roll: 0.0,
                     fov_deg: fallback.fov_deg,

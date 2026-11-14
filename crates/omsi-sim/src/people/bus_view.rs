@@ -54,7 +54,7 @@ impl PeopleSim {
     /// it, `set_cabin`).
     pub fn player_bus_view(&self, v: &VehicleInstance) -> PlayerBusView {
         let cabin = self.player_cabin.as_ref().map(|cabin| {
-            let (entry_open, exit_open) = Self::doors_open(v, cabin.entries.len(), cabin.exits.len());
+            let (entry_open, exit_open) = Self::doors_open_cabin(v, &cabin);
             CabinView { entry_open, exit_open, trailers: part_frames(v, cabin), places_off: places_off(v, cabin) }
         });
         // the destination shown: the row the display's scripts chose (target_index_int, as

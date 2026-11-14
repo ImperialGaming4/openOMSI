@@ -418,7 +418,10 @@ impl Vehicle {
         if let Some(m) = self.rail_class.as_deref().and_then(TransportMode::from_name).filter(|m| m.is_rail()) {
             return Some(m);
         }
-        if !self.contact_shoes.is_empty() {
+        // (a contact shoe on a car with a pantograph is no third-rail collector: the NF6D
+        // tram has one under its middle, and taken for a metro car it got a main-line
+        // railway's curve resistance and stood still in its tight curves)
+        if !self.contact_shoes.is_empty() && self.pantograph_var.is_none() {
             return Some(TransportMode::Metro);
         }
         let heavy = self.mass_kg() > 45_000.0;

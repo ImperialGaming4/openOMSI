@@ -109,6 +109,9 @@ pub struct Lane {
     pub ring: bool,
     /// What a rail lane's track is: tram or railway, third rail, tunnel (see `rail::track`).
     pub track: Option<crate::rail::TrackInfo>,
+    /// The path's `[third_rail]`s, as the file lists them, their `x` to the right of the way
+    /// this lane runs (see `omsi_sim::vehicle::BogieGround`).
+    pub third_rails: Vec<[f32; 6]>,
 }
 
 /// Priority of a path without a `[rule] priority`.
@@ -279,6 +282,18 @@ impl Lane {
         self.curvature[i] + (self.curvature[i + 1] - self.curvature[i]) * t
     }
 
+    /// How sharply the lane bends over `span` metres about `s` (1/m, unsigned), as a train's
+    /// bogies feel it: taken at a point, the kink where a switch's lanes meet read as the
+    /// sharpest curve there is. A lane shorter than that: its curvature at `s`.
+    pub fn curve_over(&self, s: f32, span: f32) -> f32 {
+        let (c0, c1) = ((s - span * 0.5).max(0.0), (s + span * 0.5).min(self.length()));
+        if c1 - c0 > 2.0 {
+            wrap_deg(self.at(c1).1 - self.at(c0).1).abs().to_radians() / (c1 - c0)
+        } else {
+            self.curvature_at(s).abs()
+        }
+    }
+
     pub fn start(&self) -> DVec3 {
         self.points[0]
     }
@@ -336,7 +351,7 @@ impl LaneBuilder {
     pub fn curve(points: Vec<DVec3>, headings: Vec<f32>, curvature: Vec<f32>, kind: LaneKind, width: f32) -> Lane {
         let dist = cumulative(&points);
         let speed_limit_kmh = if kind == LaneKind::Air { AIR_NO_LIMIT_KMH } else { 50.0 };
-        Lane { key: None, reversed: false, kind, width, points, headings, curvature, dist, speed_limit_kmh, next: Vec::new(), traffic_light: None, turn: 0, source: 0, offset: 0.0, name: String::new(), invisible: false, density: 1.0, group_density: Vec::new(), no_cars: false, rule_bus: false, rule_trucks: false, no_overtaking: false, left: None, right: None, priority: DEFAULT_PRIORITY, blocks: Vec::new(), crossing_problem: false, ring: false, track: None }
+        Lane { key: None, reversed: false, kind, width, points, headings, curvature, dist, speed_limit_kmh, next: Vec::new(), traffic_light: None, turn: 0, source: 0, offset: 0.0, name: String::new(), invisible: false, density: 1.0, group_density: Vec::new(), no_cars: false, rule_bus: false, rule_trucks: false, no_overtaking: false, left: None, right: None, priority: DEFAULT_PRIORITY, blocks: Vec::new(), crossing_problem: false, ring: false, track: None, third_rails: Vec::new() }
     }
 
     /// Lane from bare points: headings from the neighbouring points on both sides (the

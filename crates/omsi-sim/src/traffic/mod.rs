@@ -14,6 +14,8 @@ mod extend;
 mod lane;
 mod lights;
 mod network;
+mod rail_points;
+pub use rail_points::next_branch;
 mod walk_path;
 pub mod way;
 #[cfg(test)]

@@ -23,6 +23,17 @@ pub(super) fn path_densities(rules: &[omsi_map::MapRule], path: usize) -> (f32, 
     (density, per)
 }
 
+/// The curvature of a path `x` metres to the right of a spline of `radius` (m, > 0 turning
+/// right, 0 straight), in 1/m, positive turning right as the lane runs (`reversed`: against
+/// the spline).
+fn spline_curvature(radius: f64, x: f64, reversed: bool) -> f32 {
+    if radius == 0.0 {
+        return 0.0;
+    }
+    let k = (1.0 / (radius - x)) as f32;
+    if reversed { -k } else { k }
+}
+
 /// Lanes of one map spline: every `[path]` of the spline type runs along the curve at its
 /// lateral offset; `direction` 1 runs backwards, 2 both ways (two lanes).
 ///
@@ -88,6 +99,13 @@ pub(super) fn spline_lanes(
         let priority = rule_of("priority");
         let mut push = |pts: Vec<DVec3>, reversed: bool| {
             let mut l = LaneBuilder::polyline(pts, kind, p.width);
+            // (a track's curve as the map has it, what its bogies read: worked out of the
+            // samples it is half as tight at each end of the lane and none at all on a piece
+            // under 3 m, and a tram's squeal broke off at every joint of a bend)
+            if kind == LaneKind::Rail {
+                let k = spline_curvature(curve.radius, side * p.start[0] as f64, reversed);
+                l.curvature.iter_mut().for_each(|c| *c = k);
+            }
             if let Some(v) = priority {
                 l.priority = v;
             }
@@ -108,6 +126,14 @@ pub(super) fn spline_lanes(
             });
             l.reversed = reversed;
             l.offset = side as f32 * p.start[0];
+            // (a rail's x is across the path: seen the other way, it is on the other side; a
+            // mirrored spline has turned it over once already)
+            let across = if reversed != s.mirror { -1.0 } else { 1.0 };
+            l.third_rails = def.third_rail.iter().filter(|r| r.path == pi).map(|r| {
+                let mut v = r.values;
+                v[0] *= across;
+                v
+            }).collect();
             l.name = def
                 .path
                 .file_name()
@@ -244,6 +270,12 @@ pub(super) fn object_lanes(
             l.blocks = sco.path_blocks.get(pi).map(|b| b.iter().filter(|(n, _)| *n >= 0).map(|(n, _)| *n as u16).collect()).unwrap_or_default();
             l.crossing_problem = sco.path_crossing_problem.get(pi).copied().unwrap_or(false);
             l.reversed = reverse;
+            let across = if reverse { -1.0 } else { 1.0 };
+            l.third_rails = sco.third_rail.iter().filter(|(path, _)| *path == pi).map(|(_, r)| {
+                let mut v = *r;
+                v[0] *= across;
+                v
+            }).collect();
             l.traffic_light = controller.and_then(|c| {
                 sco.path_traffic_light
                     .get(pi)

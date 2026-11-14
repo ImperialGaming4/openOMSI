@@ -9,6 +9,8 @@ use omsi_scenery::Spline;
 mod hole_rims;
 mod ground_sound;
 pub use ground_sound::{GroundSound, LineKind, SoundLine, SoundSpot};
+mod terrain_portal;
+pub use terrain_portal::{hole_portal, portal_clearing, portal_outline, Portal};
 mod terrain_walls;
 pub use terrain_walls::{terrain_hole_walls, terrain_hole_walls_with_roads};
 mod terrain_fit;

@@ -452,6 +452,39 @@ pub fn point_at(trail: &std::collections::VecDeque<(f64, DVec3)>, u: f64) -> Opt
     Some(a.1 + (b.1 - a.1) * t)
 }
 
+/// The track behind a rail vehicle just put at `s` on `lane` (odometer `odometer` there), as a
+/// trail it could have come along: back along its lane, then on into the lane before it that
+/// runs on most nearly straight, a metre at a time. A tram put on its track had no trail, its
+/// sections stood on the way's straight line back from the lane it was put on, and in a bend
+/// its rear section stood out across the track until it had driven its own length.
+pub fn rail_track_behind(net: &Network, lane: usize, s: f32, odometer: f64) -> std::collections::VecDeque<(f64, DVec3)> {
+    let mut points = Vec::new();
+    let (mut lane, mut s) = (lane, s.max(0.0));
+    let mut d = 0.0f64;
+    while d <= RAIL_TRAIL {
+        points.push((odometer - d, net.lanes[lane].at(s).0));
+        s -= 1.0;
+        if s < 0.0 {
+            let start = net.lanes[lane].headings.first().copied().unwrap_or(0.0);
+            let before = net.prev.get(lane).into_iter().flatten().copied()
+                .filter(|&p| net.lanes[p].kind == LaneKind::Rail)
+                .min_by(|&a, &b| {
+                    let turn = |p: usize| crate::traffic::wrap_deg(start - net.lanes[p].headings.last().copied().unwrap_or(start)).abs();
+                    turn(a).total_cmp(&turn(b))
+                });
+            match before {
+                Some(p) => {
+                    s += net.lanes[p].length();
+                    lane = p;
+                }
+                None => break,
+            }
+        }
+        d += 1.0;
+    }
+    points.into_iter().rev().collect()
+}
+
 /// A body for a vehicle that has just been put on the way `state` describes, with the
 /// vehicle posed on it.
 pub fn place_body(
@@ -551,6 +584,32 @@ pub fn is_bicycle(def: &omsi_vehicle::Vehicle) -> bool {
     path.rsplit(['/', '\\']).take(2).any(|part| {
         part.contains("fahrrad") || part.contains("bicycle") || part.contains("bicicleta") || matches!(part, "bike" | "bike.ovh")
     })
+}
+
+#[cfg(test)]
+mod rail_track_tests {
+    use super::*;
+    use crate::traffic::LaneBuilder;
+
+    /// A tram put 10 m into a straight that follows a 30 m bend to the right: the track behind
+    /// it runs back round the bend, not on along the straight's line, and not into another
+    /// lane that meets the bend's end at a right angle.
+    #[test]
+    fn a_tram_put_on_its_track_has_the_bend_behind_it() {
+        let mut net = Network::default();
+        let r = 30.0;
+        let bend_len = r * std::f64::consts::FRAC_PI_2;
+        net.lanes.push(LaneBuilder::arc(DVec3::ZERO, 0.0, bend_len, r, 0.0, LaneKind::Rail, 1.5));
+        net.lanes.push(LaneBuilder::arc(DVec3::new(r, r, 0.0), 90.0, 50.0, 0.0, 0.0, LaneKind::Rail, 1.5));
+        net.lanes.push(LaneBuilder::arc(DVec3::new(r, 0.0, 0.0), 0.0, r, 0.0, 0.0, LaneKind::Rail, 1.5));
+        net.prev = vec![Vec::new(), vec![2, 0], Vec::new()];
+        let trail = rail_track_behind(&net, 1, 10.0, 500.0);
+        assert_eq!(trail.back().map(|t| t.0), Some(500.0), "it ends where the tram stands");
+        let back = |d: f64| point_at(&trail, 500.0 - d).unwrap();
+        let on_bend = |p: DVec3| ((p - DVec3::new(r, 0.0, 0.0)).truncate().length() - r).abs() < 0.3;
+        assert!(on_bend(back(25.0)) && on_bend(back(40.0)), "round the bend: {} {}", back(25.0), back(40.0));
+        assert!((back(5.0).y - r).abs() < 0.01, "on its own straight first");
+    }
 }
 
 #[cfg(test)]
@@ -775,6 +834,14 @@ impl TrafficSim {
             scheme,
             guard: Default::default(),
         });
+        // a tram's or a train's cars stand on the track behind it from the start
+        if kind == LaneKind::Rail && !self.cars[self.cars.len() - 1].vehicle.trailers.is_empty() {
+            let net = &self.net;
+            let c = self.cars.last_mut().unwrap();
+            c.rail_trail = rail_track_behind(net, lane, s, c.state.odometer as f64);
+            let (trail, state, vehicle) = (&c.rail_trail, &c.state, &mut c.vehicle);
+            vehicle.retrail(0.0, &|d| Some(rail_behind(trail, state, net, d)));
+        }
         if kind != LaneKind::Air {
             let i = self.cars.len() - 1;
             if let Some(gap) = self.red_ahead(i) {

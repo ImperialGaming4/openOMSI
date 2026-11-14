@@ -72,10 +72,14 @@ pub fn sync_vehicle_part(
         &part.ty,
         part.position,
         part.body_rotation(),
-        |li| interior_lamp_on(&part.ty, li, |n| main.var(n)),
+        // (a part running its own scripts lights its lamps by its own variables)
+        |li| interior_lamp_on(&part.ty, li, |n| part.run_var(n).or_else(|| main.var(n))),
         render,
     );
-    sync_materials(renderer, scene, main, render);
+    // (its light maps and pictures by its own variables, as its lamps: the head car's
+    // headlamp switch lit the rear car's glass, and a door light by the head car's doors
+    // lit the wrong side of a car turned round)
+    sync_materials(renderer, scene, &PartVars { part, main }, render);
     for i in part.update_text_textures(main) {
         if let (Some(Some(tex)), Some(img)) = (
             render.text_textures.get(i),
@@ -94,6 +98,33 @@ pub fn sync_vehicle_part(
             );
         }
     }
+    // the pictures its own scripts drew (the NF6D's rear cab's destination matrix), into
+    // its own textures
+    if render.shared_script {
+        return;
+    }
+    let mut rebound = Vec::new();
+    for (i, st) in part.script_textures.iter_mut().enumerate() {
+        if let Some(Some(tex)) = render.script_textures.get(i) {
+            upload_script_texture(renderer, scene, *tex, st, &mut rebound);
+        }
+    }
+    renderer.rebind_textures(scene, &rebound);
+}
+
+/// What script texture `st` drew since it last went up, into texture `tex` (with its
+/// mipmaps made anew where it has them: such a texture goes into `rebound`). How many bytes
+/// went up, 0 for none.
+fn upload_script_texture(renderer: &Renderer, scene: &mut Scene, tex: omsi_render::TextureId, st: &mut omsi_sim::scripttex::ScriptTexture, rebound: &mut Vec<omsi_render::TextureId>) -> usize {
+    let Some(rgba) = st.take_upload() else { return 0 };
+    let n = rgba.len();
+    let img = Image { width: st.width, height: st.height, rgba, has_alpha: true };
+    if !st.mipmaps {
+        renderer.update_texture(scene, tex, &img);
+    } else if renderer.update_texture_mips(scene, tex, &img) {
+        rebound.push(tex);
+    }
+    n
 }
 
 /// Resolve a vehicle `[matl_freetex]` name. OMSI add-ons often write paths such as
@@ -161,6 +192,26 @@ impl LookVars for omsi_sim::VehicleInstance {
 
     fn str_var(&self, name: &str) -> &str {
         self.ty.program.str_var(name).and_then(|i| self.state.str_vars.get(i as usize)).map_or("", |s| s.trim())
+    }
+}
+
+/// A coupled part's variables: its own where it runs its scripts, else the vehicle's it is
+/// coupled to.
+struct PartVars<'a> {
+    part: &'a omsi_sim::vehicle::TrailerPart,
+    main: &'a omsi_sim::VehicleInstance,
+}
+
+impl LookVars for PartVars<'_> {
+    fn var(&self, name: &str) -> Option<f32> {
+        self.part.run_var(name).or_else(|| LookVars::var(self.main, name))
+    }
+
+    fn str_var(&self, name: &str) -> &str {
+        match self.part.run.as_deref().and_then(|r| r.get_str(name)) {
+            Some(s) => s.trim(),
+            None => LookVars::str_var(self.main, name),
+        }
     }
 }
 
@@ -457,21 +508,7 @@ pub fn sync_vehicle_textures(
                 if *budget == 0 {
                     continue;
                 }
-                let Some(rgba) = st.take_upload() else { continue };
-                *budget = budget.saturating_sub(rgba.len());
-                let img = Image {
-                    width: st.width,
-                    height: st.height,
-                    rgba,
-                    has_alpha: true,
-                };
-                if st.mipmaps {
-                    if renderer.update_texture_mips(scene, *tex, &img) {
-                        rebound.push(*tex);
-                    }
-                } else {
-                    renderer.update_texture(scene, *tex, &img);
-                }
+                *budget = budget.saturating_sub(upload_script_texture(renderer, scene, *tex, st, &mut rebound));
             }
         }
     }

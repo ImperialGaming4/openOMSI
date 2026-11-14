@@ -145,6 +145,12 @@ impl App {
                     // this bus before it
                     c.fov_deg = crate::app_impl::drawn_fov(c.fov_deg, view_fov, fov_setting, zoom);
                 };
+                // the cab the keys work: the one the driver's view sits in (kept while the
+                // view is outside, as the driver stays where he sat)
+                if self.view == "driver" {
+                    let part = p.trailer_driver_seat().map(|s| s.0);
+                    p.vehicle.follow_driver_camera(part);
+                }
                 let mut cam = p.camera_look(&self.view, &base, head_look, self.cam.orbit);
                 finish(&mut cam);
                 // Smooth cockpit camera switch (arrow keys): the camera left comes closer to the one
@@ -272,7 +278,16 @@ impl App {
         let mut cam = cam;
         let Some(p) = self.player.as_ref() else { return cam };
         let inside_view = self.view == "driver";
-        let entering = std::mem::take(&mut self.cam.cam_blend.entering);
+        // A camera is mixed in the frame of the part it hangs on: a glide stays on one part,
+        // and a camera on another part of the train is a jump, not a glide.
+        let part = p.trailer_driver_seat().map(|(part, _)| part);
+        if self.cam.cam_blend.part != part {
+            self.cam.cam_blend.part = part;
+            self.cam.cam_blend.from = None;
+            self.cam.cam_blend.shown = None;
+        }
+        // (the walker's eyes are worked into the front's frame)
+        let entering = std::mem::take(&mut self.cam.cam_blend.entering) && part.is_none();
         let left = self
             .cam.cam_blend
             .key

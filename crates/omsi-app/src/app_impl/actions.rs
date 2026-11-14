@@ -264,6 +264,11 @@ impl App {
                     && (self.cam.look != (0.0, 0.0) || self.cam.view_zoom.contains_key(&self.view));
                 if let Some(p) = self.player.as_mut() {
                     p.cam_choice = (0, 0);
+                    // (in the cab of another part of the train - the NF6D's rear cab - its
+                    // own standard camera, not the leading vehicle's)
+                    if let Some(k) = p.vehicle.active_cab {
+                        crate::on_foot::seat_in_cab(p, Some(k));
+                    }
                 }
                 self.cam.orbit = ORBIT_DEFAULT;
                 if eyed {
@@ -302,8 +307,31 @@ impl App {
             "gear_up" | "gear_down" => {
                 self.shift_gear(name == "gear_up");
             }
+            // openOMSI's: the points ahead of a tram's leading end to their next branch (J)
+            "change_switch" => {
+                let msg = match (self.player.as_ref(), self.session.traffic.as_ref(), self.world.clone()) {
+                    (Some(p), Some(t), Some(w)) if p.rail_bound => crate::rail_drive::change_switch(p, &t.net, &w, &mut self.session.scenery),
+                    _ => "There are no points to set from here".into(),
+                };
+                self.service_msg = Some((msg, 3.0));
+            }
             "view_interiorcam_plus" | "view_interiorcam_minus" => {
                 let Some(p) = self.player.as_mut() else { return true };
+                // From outside, as in OMSI 2, the keys go from one vehicle of the train to the
+                // next: here from one driving end to the other (the NF6D's two cabs - its
+                // joints and bogies have nothing to drive from). The outside camera goes round
+                // the end chosen, and the driver's view, the keys and the driver are in its cab.
+                if self.view == "outside" {
+                    let (next, number, n) = p.vehicle.next_driving_end(name == "view_interiorcam_minus");
+                    if n > 1 {
+                        crate::on_foot::seat_in_cab(p, next);
+                        let file = next.map_or(&p.vehicle.ty.def.path, |k| &p.vehicle.trailers[k].ty.def.path);
+                        let label = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                        self.service_msg = Some((format!("Driving end {number} of {n}: {label}"), 2.5));
+                        self.sync_view_look();
+                    }
+                    return true;
+                }
                 // (the interior cameras only cycle in the interior: from outside the keys
                 // would change an invisible camera)
                 if !matches!(self.view.as_str(), "driver" | "pax") {

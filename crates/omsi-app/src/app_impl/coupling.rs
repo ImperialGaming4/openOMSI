@@ -42,7 +42,8 @@ impl App {
             w.release_vehicle(r, scene, tr);
         }
         p.vehicle.attach_trailer_ex(ty.clone(), false);
-        p.trailer_renders.push(w.add_vehicle_part(r, scene, &ty, None, &p.render));
+        let mirrors = p.vehicle.mirror_base(p.vehicle.trailers.len() - 1);
+        p.trailer_renders.push(w.add_vehicle_part(r, scene, &ty, None, &p.render, mirrors));
         p.hand_coupled += 1;
         self.service_msg = Some((omsi_ui::i18n::tr_fill("Coupled: {vehicle}", &[("{vehicle}", &format!("{} {}", ty.def.manufacturer, ty.def.type_name))]), 3.0));
     }

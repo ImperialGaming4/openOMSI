@@ -180,7 +180,8 @@ pub struct SceneryObject {
     pub attachments: Vec<Attachment>,
     pub map_lights: Vec<MapLight>,
     pub rail_enh: Vec<[f32; 8]>,
-    pub third_rail: Vec<[f32; 6]>,
+    /// (the `[path]` before it in the file, the rail)
+    pub third_rail: Vec<(usize, [f32; 6])>,
     pub trigger_boxes: Vec<TriggerBox>,
     pub joinable: bool,
     pub model: Model,
@@ -429,7 +430,12 @@ impl SceneryObject {
                     o.map_lights.push(MapLight { pos: [v[0], v[1], v[2]], color: [v[3], v[4], v[5]], radius: v[6] });
                 }
                 "rail_enh" => o.rail_enh.push(r.f32s::<8>()),
-                "third_rail" => o.third_rail.push(r.f32s::<6>()),
+                "third_rail" => {
+                    let rail = r.f32s::<6>();
+                    if let Some(path) = o.paths.len().checked_sub(1) {
+                        o.third_rail.push((path, rail));
+                    }
+                }
                 "triggerbox_new" => {
                     let v = r.f32s::<6>();
                     o.trigger_boxes.push(TriggerBox { size: [v[0], v[1], v[2]], center: [v[3], v[4], v[5]], reverb: None });

@@ -63,7 +63,7 @@ impl App {
         }
         let render = w.add_vehicle(r, scene, &ty, scheme);
         let own = p.vehicle.trailers.len().saturating_sub(p.hand_coupled);
-        let trailers: Vec<_> = p.vehicle.trailers.iter().enumerate().map(|(k, t)| w.add_vehicle_part(r, scene, &t.ty, scheme.filter(|i| k < own && *i < t.ty.paint_schemes.len()), &render)).collect();
+        let trailers: Vec<_> = p.vehicle.trailers.iter().enumerate().map(|(k, t)| w.add_vehicle_part(r, scene, &t.ty, scheme.filter(|i| k < own && *i < t.ty.paint_schemes.len()), &render, p.vehicle.mirror_base(k))).collect();
         let mut old = std::mem::replace(&mut p.render, render);
         crate::view_sync::vehicle_damage::carry_damage(r, scene, &mut old, &mut p.render);
         w.release_vehicle(r, scene, old);

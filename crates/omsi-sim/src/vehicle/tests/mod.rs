@@ -10,6 +10,8 @@ mod model_variables;
 mod rail_power;
 mod scripts_props;
 mod trams;
+mod nf6d;
+mod zweiachser;
 
 #[test]
 fn velocity_is_the_driven_wheels_speed() {

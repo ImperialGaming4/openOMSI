@@ -9,6 +9,32 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 ### New
 
 - **Frame generation on a Mac**: with Apple MetalFX upscaling on, Settings → Graphics → *Frame generation* shows a generated frame between every two drawn ones (Apple's MetalFX frame interpolator; a Mac with Apple silicon on macOS 26 or newer), for smoother motion at the price of a little more input lag. Where fewer than 30 frames a second are drawn with it (Apple's advice), it is turned off for the drive, as SSAO and the shadows are. The frame rate's corner then reads e.g. `90 fps (45 + FG)`. Off by default, experimental.
+- **Every car of a train rocks on its own springs**: each car's body leans out of bends by the force
+  on it and rocks on the rails, with `[rail_body_osc]`'s lever, frequency and decay where the file
+  gives them and the class's springs where it switches them off. Joints go with the cars around
+  them; bogies, couplings and wheel sets stay level. The lean shown is half of what the springs
+  work out.
+- **Smooth camera changes in every part of a train**: the glide between cameras also works on a
+  coupled part's cameras, such as a rear cab's.
+- **Rail vehicles no longer crash into scenery beside the track**: other vehicles still count.
+- **Tunnel mouths are open**: a `[terrainhole]` standing upright, as in the Kartoffelphantom tram
+  tunnels, is an opening: the ground is cut behind it up to where the hill is over it, and no wall
+  stands across it. The walls of a cut in the ground show the ground's texture instead of streaks.
+- **No sun inside tunnels**: a spline as tall as a storey casts its shadow wherever it lies.
+- **An AI tram's rear section follows the bend from the moment it appears**: the track behind a tram
+  put on its rails is laid out from the lanes before it, so the KT4D's rear section no longer stands
+  out across the track until the tram has driven its own length.
+- **The points key reaches 50 m ahead** (was 200 m).
+- **`GetHeightAbovePoint` as in Omsi.exe**: the ray starts 3 m over the point, meets a wire or wall
+  top on a narrow height profile, and reads 1000 with nothing below it (it read 0, which held a
+  pantograph at the top of its travel).
+- **Third rail and curve squeal on trams and trains**: `[contact_shoe]`s now read the `[third_rail]`
+  under them (`contactshoe_N_volt_rail` and the rest, which the NF6D's PZB takes its codes from),
+  and every car's bogies report the curve under them and when the wheels reach the flange
+  (`boogie_N_invradius`, `boogie_N_wheel_at_limit`), which is what starts the curve squeal.
+- **Passengers board every car of a train coupled back to back**: a car hung on turned round, as the
+  second car of a T5C5, is joined into the passenger cabin turned round, so people get in and out by
+  its own doors and ride in it (only the first car took passengers).
 - **Apple MetalFX upscaling on a Mac**: Settings → Graphics → Upscaling offers *Apple MetalFX* on a Mac with Apple silicon (macOS 13 or newer), with the same quality levels as NVIDIA DLSS and AMD FSR 3 on Windows: the picture is drawn smaller and brought up to the window with the help of the last frames, in place of the anti-aliasing and the render scale, from the next start. It is part of macOS, so there is nothing to install. Where the Mac's graphics chip scales up less than Ultra performance asks for, the picture is drawn at the smallest size it takes.
 - **Rename a save**: the pencil beside a save slot in the launcher's *Continue* list gives it a name of your own, without editing its `.osn` file in the map's `Saves` folder. Saving over that slot in the game keeps the name (#3849).
 - **AI reaction time**: the new `ai_reaction` setting (25 to 200 %, default 100 %, a slider in the launcher's Traffic settings) scales how long the AI drivers wait before moving off, so a queue at a light pulls away closer together at a lower value. It never goes under 0.4 s, the shortest reaction the junction code is built for (#3793).

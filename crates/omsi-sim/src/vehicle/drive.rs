@@ -120,11 +120,14 @@ impl VehicleInstance {
                 prev.0,
                 body_heading(&self.ty.def, prev.1, false),
             );
-            let mut obstacles = self
-                .collision
-                .as_ref()
-                .map(|cw| cw.obstacles_near(&obb))
-                .unwrap_or_default();
+            // (on the rails only other vehicles are in the way. The track goes where the map
+            // laid it, past platforms and tunnel walls that clear the real car: this one flat box
+            // for the whole body - the NF6D's reaches 1.27 m under the rails - swung its ends
+            // into them in a bend, and the tram stopped dead as in a crash)
+            let mut obstacles = match (&self.collision, self.rail_env.is_some()) {
+                (Some(cw), false) => cw.obstacles_near(&obb),
+                _ => Vec::new(),
+            };
             obstacles.extend(self.dynamic_boxes.iter().copied());
             let hit = obstacles.iter().copied().find_map(|obstacle| {
                 let was_overlapping = if obstacle.mass > 0.0 {

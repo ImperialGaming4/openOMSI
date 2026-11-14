@@ -714,10 +714,15 @@ impl World {
                 // (a road the ground was pulled onto lies on it whatever the heights say; a
                 // wire - under a metre across - would only flicker in the shadow map)
                 let (lo_x, hi_x) = st.def.profiles.iter().flat_map(|p| p.points.iter().map(|q| q.x)).fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
-                let casts_shadow = !aligned && hi_x - lo_x >= 1.0 && {
+                // (a spline as tall as a storey is a structure, not a surface, however deep it
+                // lies: the ground casts no shadow, and through a tunnel buried in a hill the
+                // sun fell on everything inside it, a tram as bright as out in the street)
+                let (lo_z, hi_z) = st.def.profiles.iter().flat_map(|p| p.points.iter().map(|q| q.z)).fold((f32::MAX, f32::MIN), |(a, b), z| (a.min(z), b.max(z)));
+                let structure = hi_z - lo_z >= SPLINE_STRUCTURE_HEIGHT;
+                let casts_shadow = !aligned && hi_x - lo_x >= 1.0 && (structure || {
                     let step = mesh.positions.len().div_ceil(64).max(1);
                     mesh.positions.iter().step_by(step).all(|p| p.z - out.base_terrain.sample(p.x.clamp(0.0, tile_size() as f32), p.y.clamp(0.0, tile_size() as f32)) > SPLINE_SHADOW_CLEARANCE)
-                };
+                });
                 if casts_shadow && debug_splines {
                     log::info!("tile {tx},{ty} spline {} {} stands clear of the ground: it casts a sun shadow", s.id, s.file);
                 }

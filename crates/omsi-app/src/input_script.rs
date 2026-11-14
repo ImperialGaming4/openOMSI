@@ -433,6 +433,12 @@ impl App {
                     self.game_action("toggel_mouse_ctrl");
                     return true;
                 }
+                // openOMSI's `change_switch` (J, free in OMSI's keyboard.cfg): a tram sets the
+                // points ahead of it; elsewhere the key stays free
+                KeyCode::KeyJ if !ctrl && !alt && !shift_now && self.player.as_ref().is_some_and(|p| p.rail_bound) && self.input.key_left_free(code, "change_switch") => {
+                    self.game_action("change_switch");
+                    return true;
+                }
                 // (a manual gearbox's Ctrl+Up / Ctrl+Down are the [game] keys `gear_up` and
                 // `gear_down` now, which can be moved: see `with_game_defaults`, #907)
                 // (Ctrl+Alt+arrows turn the mirror looked at, see the frame)

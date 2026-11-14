@@ -26,7 +26,9 @@ impl VehicleInstance {
         use omsi_vehicle::rail_spec::PowerKind;
         let d = &self.ty.def;
         match d.rail_power {
-            PowerKind::Auto if !d.contact_shoes.is_empty() => PowerKind::ThirdRail,
+            // (a pantograph says where the current is: the NF6D's contact shoe under its
+            // middle is no third-rail collector)
+            PowerKind::Auto if !d.contact_shoes.is_empty() && d.pantograph_var.is_none() => PowerKind::ThirdRail,
             PowerKind::Auto if pantograph_binds(d) => PowerKind::Catenary,
             PowerKind::Auto => PowerKind::OnBoard,
             k => k,
@@ -88,13 +90,30 @@ impl VehicleInstance {
         let own: f32 = brakes.iter().sum();
         let towed: f32 = self.trailers.iter().flat_map(|t| t.v_brakes.iter()).map(|&id| self.get(id).max(0.0)).sum::<f32>()
             + self.trailers.iter_mut().filter_map(|t| t.run.as_deref_mut()).map(|r| r.take_own_brakeforce()).sum::<f32>();
+        let radius_of = |def: &omsi_vehicle::Vehicle, or: f32| {
+            let driven = def.axles.iter().filter(|a| a.driven).map(|a| a.wheel_diameter / 2.0).collect::<Vec<_>>();
+            if driven.is_empty() { or } else { (driven.iter().sum::<f32>() / driven.len() as f32).max(0.15) }
+        };
+        let radius = radius_of(&self.ty.def, 0.45);
+        // Omsi.exe runs every car of a train on its own `M_Wheel` and `Brakeforce`: a car
+        // whose own scripts work them out (the NF6D's rear cab car has a motor and brakes of
+        // its own) pulls and brakes too - turned round, its torque pulls the other way in
+        // its frame. Only the leading vehicle's counted, the NF6D had half its pull and half
+        // its brakes.
+        let mut part_drive = 0.0f32;
+        for t in &self.trailers {
+            let Some(run) = t.run.as_deref() else { continue };
+            if let Some(m) = run.own_stored("M_Wheel").filter(|m| m.is_finite()) {
+                let m = if t.reversed { -m } else { m };
+                part_drive += m / radius_of(&t.ty.def, radius);
+            }
+        }
         let brake = own + towed;
-        if m_wheel.abs() < 1.0 && brake < 1.0 {
+        let drive = m_wheel / radius + part_drive;
+        if drive.abs() < 1.0 && brake < 1.0 {
             return None;
         }
-        let driven = self.ty.def.axles.iter().filter(|a| a.driven).map(|a| a.wheel_diameter / 2.0).collect::<Vec<_>>();
-        let radius = if driven.is_empty() { 0.45 } else { driven.iter().sum::<f32>() / driven.len() as f32 }.max(0.15);
-        Some(Forces { drive: m_wheel / radius, brake, track_brake: 0.0 })
+        Some(Forces { drive, brake, track_brake: 0.0 })
     }
 
     pub(super) fn on_rails(&self) -> bool {

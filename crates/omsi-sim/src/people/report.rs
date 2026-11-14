@@ -112,7 +112,11 @@ impl PeopleSim {
             exit_busy: self.exit_busy.clone(),
             places: self.pax_places.get(&BusId::Player).cloned().unwrap_or_default(),
         };
-        Self::write_door_requests(b, &doors);
+        // (a train's cars that run their own scripts hear of their own doors)
+        match self.cabin_made(b) {
+            Some(cabin) => Self::write_door_requests_cabin(b, &doors, &cabin),
+            None => Self::write_door_requests(b, &doors),
+        }
     }
 
     /// Who wants a timetable bus to stop, as Omsi.exe asks before it lets one pull in

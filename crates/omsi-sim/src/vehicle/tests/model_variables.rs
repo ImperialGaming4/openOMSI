@@ -330,7 +330,7 @@ fn a_livery_changed_puts_back_what_the_old_one_set() {
     v.apply_paint_vars(Some(0));
     let car = painted("{init}\n5 (S.L.v_font)\n{end}\n");
     v.attach_trailer(car.clone());
-    v.trailers[0].run = Some(Box::new(crate::vehicle::car_run::CarRun::start(&car, &mut v, [1.0, 0.0, 0.0])));
+    v.trailers[0].run = Some(Box::new(crate::vehicle::car_run::CarRun::start(&car, &mut v, [1.0, 0.0, 0.0], &mut Vec::new())));
     assert_eq!((v.var("v_drzwi"), v.var("v_font")), (Some(1.0), Some(7.0)));
     assert_eq!(v.trailers[0].run_var("v_font"), Some(7.0));
     for (scheme, drzwi, font, car_font) in [(Some(1), 0.0, 3.0, 5.0), (Some(0), 1.0, 7.0, 7.0), (None, 0.0, 3.0, 5.0)] {
@@ -389,7 +389,7 @@ fn a_coupled_car_lets_go_of_the_value_it_took_from_the_painted_bus() {
     v.apply_paint_vars(Some(0));
     let car = painted("{frame}\n(L.L.v_drzwi) (S.L.v_drzwi)\n{end}\n");
     v.attach_trailer(car.clone());
-    v.trailers[0].run = Some(Box::new(crate::vehicle::car_run::CarRun::start(&car, &mut v, [1.0, 0.0, 0.0])));
+    v.trailers[0].run = Some(Box::new(crate::vehicle::car_run::CarRun::start(&car, &mut v, [1.0, 0.0, 0.0], &mut Vec::new())));
     assert_eq!(v.trailers[0].run_var("v_drzwi"), Some(1.0));
     for scheme in [Some(1), None] {
         v.repaint(scheme);

@@ -498,7 +498,7 @@ impl Showroom {
         vehicle.position = DVec3::ZERO;
         vehicle.heading = 0.0;
         let render = world.add_vehicle(renderer, &mut scene, &r.vt, r.scheme);
-        let trailers: Vec<scene::VehicleRender> = vehicle.trailers.iter().map(|t| world.add_vehicle_part(renderer, &mut scene, &t.ty, r.scheme.filter(|i| *i < t.ty.paint_schemes.len()), &render)).collect();
+        let trailers: Vec<scene::VehicleRender> = vehicle.trailers.iter().enumerate().map(|(k, t)| world.add_vehicle_part(renderer, &mut scene, &t.ty, r.scheme.filter(|i| *i < t.ty.paint_schemes.len()), &render, vehicle.mirror_base(k))).collect();
         vehicle.init_text_textures(&mut world.fonts.lock(), &|p| omsi_texture::decode_file(p).ok().map(|i| (i.width, i.height, i.rgba)));
         for t in vehicle.trailers.iter_mut() {
             t.init_text_textures(&mut world.fonts.lock(), &|p| omsi_texture::decode_file(p).ok().map(|i| (i.width, i.height, i.rgba)));

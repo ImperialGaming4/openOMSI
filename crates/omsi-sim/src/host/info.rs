@@ -108,7 +108,7 @@ impl VehicleHost {
                 let z = stacks.pop();
                 let y = stacks.pop();
                 let x = stacks.pop();
-                let h = self.ground_probe.as_ref().map(|f| f(x, y, z)).unwrap_or(0.0);
+                let h = self.ground_probe.as_ref().map_or(crate::vehicle::NO_FACE_BELOW, |f| f(x, y, z));
                 stacks.push(h);
             }
             // passengers standing on one link of the cabin path network

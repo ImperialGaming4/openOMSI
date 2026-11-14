@@ -18,7 +18,7 @@ impl World {
         // (the mirrors' glass is the player's bus's: what the last one left is forgotten)
         self.mirror_aspect.lock().clear();
         self.mirror_glass.lock().clear();
-        let set = self.upload_vehicle(renderer, scene, vt, scheme, true);
+        let set = self.upload_vehicle(renderer, scene, vt, scheme, true, 0);
         self.player_textures.lock().clear();
         let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, None, None, false);
         self.protect_player_textures(&set, &mut render);
@@ -30,7 +30,8 @@ impl World {
     /// A part coupled behind the player's vehicle (the rear section of an articulated bus).
     /// With `[scriptshare]` it has no scripts of its own: its matrix displays (`\S:n`,
     /// `[useScriptTexture] n`) are the leading vehicle's script textures, which is why the
-    /// O530G's rear section declares no `[scripttexture]` at all.
+    /// O530G's rear section declares no `[scripttexture]` at all. `mirror_base`: how many
+    /// mirror cameras the cars before it have (see `own_mirror`).
     pub fn add_vehicle_part(
         &self,
         renderer: &Renderer,
@@ -38,8 +39,9 @@ impl World {
         vt: &omsi_sim::VehicleType,
         scheme: Option<usize>,
         lead: &VehicleRender,
+        mirror_base: usize,
     ) -> VehicleRender {
-        let set = self.upload_vehicle(renderer, scene, vt, scheme, false);
+        let set = self.upload_vehicle(renderer, scene, vt, scheme, false, mirror_base);
         let shared = if vt.def.script_share || vt.model.script_textures.is_empty() {
             Some(lead.script_textures.as_slice())
         } else {
@@ -138,7 +140,7 @@ impl World {
             }
             return;
         }
-        let c = self.upload_vehicle(renderer, scene, vt, scheme, false);
+        let c = self.upload_vehicle(renderer, scene, vt, scheme, false, 0);
         self.vehicle_gpu.lock().insert(key, c);
     }
 
@@ -181,7 +183,7 @@ impl World {
         let set = match cached {
             Some(c) => c,
             None => {
-                let c = self.upload_vehicle(renderer, scene, vt, scheme, false);
+                let c = self.upload_vehicle(renderer, scene, vt, scheme, false, 0);
                 self.vehicle_gpu.lock().insert(key.clone(), c.clone());
                 c
             }
@@ -849,6 +851,7 @@ impl World {
         vt: &omsi_sim::VehicleType,
         scheme: Option<usize>,
         player: bool,
+        mirror_base: usize,
     ) -> VehicleSet {
         let dirs = vt.texture_dirs(&self.root);
         // (the scheme's pictures come named in full by the substitutions; its folder is
@@ -875,6 +878,7 @@ impl World {
         let mut up = VehicleUpload {
             vt,
             player,
+            mirror_base,
             subst: &subst,
             dirs: &dirs,
             dirs_ref: &dirs_ref,
@@ -964,7 +968,8 @@ impl World {
         slot: usize,
         m: &omsi_o3d::Material,
     ) -> MaterialId {
-        let VehicleUpload { vt, player, subst, dirs, dirs_ref, .. } = *up;
+        let VehicleUpload { vt, player, mirror_base, subst, dirs, dirs_ref, .. } = *up;
+        let own = |mi: usize| own_mirror(mi, mirror_base, vt.def.cameras_reflexion.len());
         let VehicleUpload { tex_ids, held, materials, tex_time, instances, missing_tex, only, variants, dyn_slots, .. } = up;
         let def = &vt.model.meshes[vm.def_index];
         // [CTCTexture] slots swapped by the paint scheme
@@ -981,7 +986,7 @@ impl World {
             ($name:expr, $dirs:expr) => {{
                 let nm: &str = &$name;
                 match mirror_index(nm) {
-                    Some(mi) => Some(self.mirror_texture(renderer, scene, mi)),
+                    Some(mi) => Some(self.mirror_texture(renderer, scene, own(mi))),
                     None => tex!(nm, $dirs, vehicle_texture),
                 }
             }};
@@ -1022,7 +1027,7 @@ impl World {
             if player {
                 self.note_mirror_aspect(mi, &vm.data, slot);
             }
-            Some(self.mirror_texture(renderer, scene, mi))
+            Some(self.mirror_texture(renderer, scene, own(mi)))
         } else if rain_layer && self.settings.snow() && !seasonal_texture(&tex_name, dirs_ref) {
             tex!("", &dirs_ref, snow_glass_texture)
         } else {
@@ -1520,6 +1525,7 @@ fn slot_extra(
 struct VehicleUpload<'a> {
     vt: &'a omsi_sim::VehicleType,
     player: bool,
+    mirror_base: usize,
     /// The paint scheme's `[CTCTexture]` substitutions.
     subst: &'a HashMap<String, String>,
     dirs: &'a [PathBuf],

@@ -79,7 +79,7 @@ impl VehicleInstance {
         // lamp only where nothing is coupled, the tail lamps at the last car)
         self.set_engine_ev(Ev::TrainFrontCoupling, 0.0);
         self.set_engine_ev(Ev::TrainBackCoupling, if self.trailers.is_empty() { 0.0 } else { 1.0 });
-        self.set_engine_ev(Ev::TrainMeReverse, 0.0);
+        self.set_engine_ev(Ev::TrainMeReverse, if self.turned { 1.0 } else { 0.0 });
         // and for the tyres' grip
         let mu = road_grip(self.host.street_cond, self.host.temperature);
         if let Some(rb) = self.rigid.as_mut() {
@@ -229,22 +229,42 @@ impl VehicleInstance {
     }
 
     pub(super) fn run_control_cables(&mut self) {
-        for &(write, read) in &self.v_cables {
-            self.state.vars[read as usize] = self.state.vars[write as usize];
+        // (see `car_run::Cables`: from 0, the largest of what is on the wire)
+        for &(_, read) in &self.v_cables {
+            self.state.vars[read as usize] = 0.0;
         }
-        super::car_run::read_back_bus(self);
+        for &(write, read) in &self.v_cables {
+            let value = self.state.vars[write as usize];
+            let v = &mut self.state.vars[read as usize];
+            *v = v.max(value);
+        }
+        super::car_run::apply_lead_cables(self);
     }
 
     /// Run the scripts' frame once with no time passing (no physics, no clock): what a
-    /// switch just pressed makes of the variables the scripts derive from it.
+    /// switch just pressed makes of the variables the scripts derive from it. Every car of
+    /// a train runs it, the wires first as in a whole frame: a one-frame pulse a button sets
+    /// in the head car and its {frame} clears (the T5C5 pair's FokGyem, telling the passive
+    /// unit to take the line) never reached the other cars when this ran the head car alone.
     pub fn update_scripts_only(&mut self, _dt: f32) {
         crate::timetable_run::apply_pending_destination(self);
         let p = self.ty.program.clone();
         let gap = self.host.clock.timegap;
         self.host.clock.timegap = 0.0;
+        let mut trailers = std::mem::take(&mut self.trailers);
+        if !trailers.is_empty() {
+            super::car_run::run_cables(self, &mut trailers);
+        }
         self.run_control_cables();
         self.vm.run_frame(&p, &mut self.state, &mut self.host);
         self.apply_scheme_vars_each_frame();
+        if !trailers.is_empty() {
+            for t in &mut trailers {
+                t.run_scripts_only(self);
+            }
+            super::car_run::run_cables(self, &mut trailers);
+        }
+        self.trailers = trailers;
         self.host.clock.timegap = gap;
     }
 
@@ -256,12 +276,18 @@ impl VehicleInstance {
     /// bellows only above that, and the NL/NG lift may drop by what it reads (up to
     /// 0.3 m). Read the other way round (ground minus point) the sensor sat at 0, the
     /// right-hand bellows of an Urbino never let their air out and the bus leant 1.7° to
-    /// the left all the way. The ground is what lies under the point (with the world's
-    /// faces, looked for from half a metre above it, so a kerb a little higher still
-    /// counts): the plain sampler gives the highest face there, which under a petrol
+    /// the left all the way.
+    ///
+    /// As Omsi.exe has it (0x7d35d0, 0x7aec3c, 0x7a0814, 0x7c40c8): the ray starts 3 m over the
+    /// point and comes down on the first face (so it may read down to -3, a face just above
+    /// the point), of the terrain, a spline or an object alike; with nothing under it the
+    /// answer is 1000. The plain sampler gives the highest face there, which under a petrol
     /// station's canopy is its roof - the point stood metres "under the ground", the NL/NG
     /// lift could not go down at all and the arcsine of the ramp's angle turned it on its
-    /// side and then away (#2205).
+    /// side and then away (#2205). The Zweiachser tram's pantograph rests on what this reads
+    /// from 6 m up (`6 - height`, and under 1000 it takes 5 m): the answer 0 for "nothing
+    /// there" held it at 6 m, and started half a metre over the point, it did not see
+    /// bridges and wires a little higher.
     pub(super) fn update_ground_probe(&mut self) {
         if self.ground.is_none() && self.contact.is_none() {
             return;
@@ -279,11 +305,20 @@ impl VehicleInstance {
         let contact = self.contact.clone();
         Some(std::sync::Arc::new(move |x, y, z| {
             let w = pos + rot.transform_point3(glam::Vec3::new(x, y, z)).as_dvec3();
+            let top = w.z + HEIGHT_RAY_START;
             let h = match &contact {
-                Some(c) => c.probe(w.x, w.y, w.z + 0.5).below,
-                None => g.as_ref().and_then(|g| g(w.x, w.y)),
+                Some(c) => {
+                    let p = c.probe(w.x, w.y, top);
+                    // (a narrow height profile high on a spline - a wall's top, a wire - is
+                    // no road, and the wheels' probe lists it over the road: a ray meets it)
+                    match p.above.filter(|a| *a <= top) {
+                        Some(a) => Some(p.below.map_or(a, |b| b.max(a))),
+                        None => p.below,
+                    }
+                }
+                None => g.as_ref().and_then(|g| g(w.x, w.y)).filter(|h| *h <= top),
             };
-            h.map_or(0.0, |h| (w.z - h) as f32)
+            h.map_or(NO_FACE_BELOW, |h| (w.z - h) as f32)
         }))
     }
 
@@ -503,10 +538,9 @@ impl VehicleInstance {
         if self.ty.def.is_rail() && self.trailers.iter().any(|t| t.track.is_some()) {
             return;
         }
+        self.turned = self.active_cab.and_then(|k| self.trailers.get(k)).is_some_and(|t| t.reversed);
         let mut trailers = std::mem::take(&mut self.trailers);
         super::car_run::set_couplings(&mut trailers);
-        super::car_run::start_bus(self);
-        super::car_run::start_back_bus(self, &mut trailers);
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
         let mut turn = self.turning();
         for t in &mut trailers {
@@ -515,6 +549,7 @@ impl VehicleInstance {
             lead = Some((t.position, t.body_rotation(), t.heading));
             turn = (t.kappa, t.axle_long);
         }
+        super::car_run::run_cables(self, &mut trailers);
         self.trailers = trailers;
     }
 
@@ -537,10 +572,9 @@ impl VehicleInstance {
         if self.trailers.is_empty() {
             return;
         }
+        self.turned = self.active_cab.and_then(|k| self.trailers.get(k)).is_some_and(|t| t.reversed);
         let mut trailers = std::mem::take(&mut self.trailers);
         super::car_run::set_couplings(&mut trailers);
-        super::car_run::start_bus(self);
-        super::car_run::start_back_bus(self, &mut trailers);
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
         let mut turn = self.turning();
         if self.ty.def.is_rail() {
@@ -560,6 +594,10 @@ impl VehicleInstance {
             let travel = |turned: bool, y: f32| if turned { -y as f64 } else { y as f64 };
             // how far the joint in front of the part lies behind this vehicle's origin
             let mut joint = -travel(body_reversed(&self.ty.def, false), trailers[0].coupling_back.y);
+            // (each car's lean of the last frame, for the joints between them, and where the
+            // cars of this frame stand, for a part that is one of them over again)
+            let rolls: Vec<Option<f32>> = if self.rail_sway { trailers.iter_mut().map(|t| t.body_roll()).collect() } else { Vec::new() };
+            let mut cars = vec![(0.0f64, self.bank)];
             for i in 0..trailers.len() {
                 // (the part's rear coupling is the one the next part hangs on, in this part's frame)
                 let rear = trailers.get(i + 1).map(|n| n.coupling_back.y);
@@ -567,15 +605,26 @@ impl VehicleInstance {
                 let turned = body_reversed(&t.ty.def, t.reversed);
                 let origin = joint + travel(turned, t.coupling_front.y);
                 let (y_front, y_rear) = t.rail_ends();
+                // (bogie 0 is the one at the model's front: the rear one of a part turned round)
+                let (y0, y1) = if turned { (y_rear, y_front) } else { (y_front, y_rear) };
+                t.rail_bogies = Some([origin - y0 as f64, origin - y1 as f64]);
                 if omsi_cfg::flags::OMSI_DEBUG_TRAILERS.is_set() {
                     static SHOWN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                     if SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6 {
                         log::info!("rail part {i}: origin {origin:.2} m behind the lead's, joint before it {joint:.2}, running ends {y_front:.2} / {y_rear:.2}, front coupling {:.2}, back coupling {:.2} (declared: front {:?}, back {:?}, {} axles, boogies {:?})", t.coupling_front.y, t.coupling_back.y, t.ty.def.coupling_front.as_ref().map(|c| c.pos), t.ty.def.coupling_back.as_ref().map(|c| c.pos), t.ty.def.axles.len(), t.ty.def.boogies);
                     }
                 }
+                let sway = self.rail_sway.then(|| {
+                    let before = rolls[..i].iter().rev().flatten().next().copied().unwrap_or(self.bank);
+                    let after = rolls[i + 1..].iter().flatten().next().copied().unwrap_or(before);
+                    (cars.iter().find(|c| super::sway::same_car(c.0, origin)).map(|c| c.1), (before + after) * 0.5)
+                });
                 match (at_behind(origin - y_front as f64), at_behind(origin - y_rear as f64)) {
-                    (Some(front), Some(back)) => t.place_on_rails(self, dt, lead, (front, y_front), (back, y_rear)),
+                    (Some(front), Some(back)) => t.place_on_rails(self, dt, lead, (front, y_front), (back, y_rear), sway),
                     _ => t.update(self, dt, lead),
+                }
+                if self.rail_sway && t.body_roll().is_some() {
+                    cars.push((origin, t.bank));
                 }
                 if let Some(y) = rear {
                     joint = origin - travel(turned, y);
@@ -599,9 +648,15 @@ impl VehicleInstance {
                 turn = (t.kappa, t.axle_long);
             }
         }
+        super::car_run::run_cables(self, &mut trailers);
         self.trailers = trailers;
     }
 }
+
+/// How far over the point `GetHeightAbovePoint`'s ray starts (m, Omsi.exe 0x7a0a88).
+const HEIGHT_RAY_START: f64 = 3.0;
+/// What `GetHeightAbovePoint` answers with no face under the point (Omsi.exe 0x7a086c).
+pub(crate) const NO_FACE_BELOW: f32 = 1000.0;
 
 /// OMSI's frames, a thirtieth of a second (`[maxFPS]` 30 in its options.cfg and every option
 /// preset but one): `A_Trans_*` is the body's velocity change over one of them (0x7d5124),

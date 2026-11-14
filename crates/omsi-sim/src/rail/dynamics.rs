@@ -118,6 +118,18 @@ pub fn curve_resistance(radius: f32) -> f32 {
     per_kn * 1e-3
 }
 
+/// Curve resistance of a street tram, as a fraction of the weight: its short bogies (under
+/// 2 m between the axles) and small wheels drag far less through a curve than Röckl's
+/// main-line cars - about 10 N/kN in a 25 m curve, 1 N/kN at 300 m. With Röckl's (6 % of
+/// the weight at a 30 m bend, the factor 1.2 on top) the NF6D, its throttle held at a fifth
+/// until it rolls, stood still in the tight curves and the switches of its own depot.
+pub fn tram_curve_resistance(radius: f32) -> f32 {
+    if !radius.is_finite() || radius > 2000.0 {
+        return 0.0;
+    }
+    300.0 / (radius.max(15.0) + 5.0) * 1e-3
+}
+
 /// Resistance to motion at speed `v` (m/s, any sign), N, positive, not counting the grade.
 pub fn resistance(c: &Consist, cond: &Conditions, v: f32) -> f32 {
     let (a, b) = c.class.running_resistance();
@@ -126,7 +138,7 @@ pub fn resistance(c: &Consist, cond: &Conditions, v: f32) -> f32 {
     // journals, the wheels have settled on the rails
     let start = 1.0 + 0.8 / (1.0 + (v.abs() / 0.6).powi(2));
     let run = weight * (a + b * v.abs()) * start;
-    let curve = weight * curve_resistance(cond.radius) * if c.class == RailClass::Tram { 1.2 } else { 1.0 };
+    let curve = weight * if c.class == RailClass::Tram { tram_curve_resistance(cond.radius) } else { curve_resistance(cond.radius) };
     // the air: the front, plus the skin friction along the length (a car of 20 m has about
     // 0.4 m² of "front" in friction), twice in a tunnel
     let rel = v.abs() + cond.headwind * v.signum();
@@ -359,7 +371,22 @@ mod tests {
         let c = tram();
         let straight = step(&c, &Conditions::default(), &Forces::default(), 8.0, 1.0);
         let bend = step(&c, &Conditions { radius: 25.0, ..Conditions::default() }, &Forces::default(), 8.0, 1.0);
-        assert!(bend.accel < straight.accel * 1.8 && bend.accel < straight.accel - 0.3, "{} against {}", bend.accel, straight.accel);
+        // (about 10 N/kN: a tenth of a m/s² more, not the third of Röckl's main-line cars)
+        let extra = straight.accel - bend.accel;
+        assert!(extra > 0.06 && extra < 0.15, "{} against {}", bend.accel, straight.accel);
+    }
+
+    /// A tram starting in its tightest curve on a fifth of its pull (the NF6D's first
+    /// throttle step) gets going: the curve does not hold it as if it were braked.
+    #[test]
+    fn a_tram_gets_going_in_a_tight_curve_on_little_pull() {
+        let c = tram();
+        let bend = Conditions { radius: 25.0, ..Conditions::default() };
+        let pull = 0.2 * 0.15 * c.mass * G;
+        let (v, _, _) = run(&c, &bend, |_| Forces { drive: pull, ..Forces::default() }, 0.0, 10.0);
+        assert!(v > 0.5, "{v} m/s after 10 s");
+        assert!(tram_curve_resistance(25.0) < curve_resistance(25.0) * 0.5);
+        assert!(tram_curve_resistance(300.0) < tram_curve_resistance(50.0));
     }
 
     #[test]
