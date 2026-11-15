@@ -601,7 +601,8 @@ impl App {
             ray,
         ) {
             let (dx, dy) = std::mem::take(&mut self.input.drag_delta);
-            p.occlude_controls = self.view == "outside";
+            // (in the map camera too: a click on the wall is the vehicle's, not a switch behind it)
+            p.occlude_controls = matches!(self.view.as_str(), "outside" | "free");
             p.drawn_outside = !self.cam.in_cab;
             if pressed {
                 if let Some((page, u, v)) = p.html_hit(o, d, &self.integrations.plugin_pointer) {
@@ -677,9 +678,13 @@ impl App {
                 self.input.dragging = false;
             }
         }
-        // the map camera (F4): a click on the ground that worked nothing of the bus asks
-        // whether to move the bus there (`game_panels::move_here`)
+        // the map camera (F4): a click on a vehicle that worked nothing of it asks whether to
+        // change into it (`game_panels::switch_here`), one on the ground whether to move the
+        // bus there (`game_panels::move_here`)
         if pressed && self.view == "free" && !self.cam.ego && !self.input.dragging && self.menus.game_menu.is_none() && !self.mouse_steering_now() {
+            if crate::game_panels::ask_switch(self) {
+                return;
+            }
             if self.player.as_ref().is_some_and(|p| crate::rail_drive::is_rail(&p.vehicle.ty.def)) {
                 return;
             }

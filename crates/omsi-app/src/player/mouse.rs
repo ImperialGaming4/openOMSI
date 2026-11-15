@@ -77,6 +77,34 @@ impl Player {
         Some(self.nearest_hits(origin, dir).0).filter(|t| t.is_finite())
     }
 
+    /// Which part of the vehicle a ray meets first (any visible mesh): None the leading
+    /// vehicle, else the coupled part's index, and how far along the ray.
+    pub(crate) fn part_hit(&self, origin: DVec3, dir: Vec3) -> Option<(Option<usize>, f32)> {
+        let mut best: Option<(Option<usize>, f32)> = None;
+        let mut see = |part: Option<usize>, t: f32| {
+            if t > 0.02 && best.is_none_or(|b| t < b.1) {
+                best = Some((part, t));
+            }
+        };
+        let o = (origin - self.vehicle.position).as_vec3();
+        for (i, mesh) in self.vehicle.ty.meshes.iter().enumerate() {
+            let transform = self.vehicle.mesh_local_transform(i);
+            if self.vehicle.mesh_props[i].visible && ray_may_hit(&self.vehicle.ty, i, &transform, o, dir, 0.0) {
+                omsi_geometry::ray_mesh(o, dir, &mesh.data, &transform).into_iter().for_each(|t| see(None, t));
+            }
+        }
+        for (k, trailer) in self.vehicle.trailers.iter().enumerate() {
+            let o = (origin - trailer.position).as_vec3();
+            for (i, mesh) in trailer.ty.meshes.iter().enumerate() {
+                let transform = trailer.mesh_local_transform(i);
+                if trailer.mesh_props[i].visible && ray_may_hit(&trailer.ty, i, &transform, o, dir, 0.0) {
+                    omsi_geometry::ray_mesh(o, dir, &mesh.data, &transform).into_iter().for_each(|t| see(Some(k), t));
+                }
+            }
+        }
+        best
+    }
+
     /// Whether a mesh of the vehicle is glass / transparent (windows, windshield).
     pub(crate) fn is_mesh_glass(&self, trailer: Option<usize>, i: usize) -> bool {
         let (ty, def_idx) = match trailer {

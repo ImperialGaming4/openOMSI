@@ -3351,6 +3351,14 @@ _version: 2
   en: "Destination set as typed"
 "No vehicle to set a destination for":
   en: "No vehicle to set a destination for"
+"Change to this vehicle?":
+  en: "Change to this vehicle?"
+"Change to this cab?":
+  en: "Change to this cab?"
+"This part cannot be driven":
+  en: "This part cannot be driven"
+"Yes":
+  en: "Yes"
 "Move the vehicle here?":
   en: "Move the vehicle here?"
 "Move here":
